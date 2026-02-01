@@ -118,6 +118,83 @@ pts_states <- pts_local |>
   filter(state != lag(state) | is.na(lag(state))) |>
   ungroup()
 
+# -------------------------------------------------------
+# Transition Matrix
+# -------------------------------------------------------
 
+# transition count matrix
+N_state <- with(
+  pts_states |>
+    arrange(traj_id, t) |>
+    group_by(traj_id) |>
+    mutate(state_next = lead(state)) |>
+    filter(!is.na(state_next)) |>
+    ungroup(),
+  table(
+    factor(state, levels = sort(unique(state))),
+    factor(state_next, levels = sort(unique(state)))
+  )
+)
 
+# transition probability matrix
+P_state <- prop.table(N_state, 1) |> unclass()
 
+# create markovchain object
+mc_states <- new("markovchain",
+                 states = rownames(P_state),
+                 byrow = TRUE,
+                 transitionMatrix = P_state,
+                 name = "Cluster state process"
+)
+
+# -------------------------------------------------------
+# Long-run Behavior
+# -------------------------------------------------------
+
+# most visited states
+pts_states |>
+  count(state, name = "n") |>
+  arrange(desc(n)) 
+
+s0 <- pts_states |>
+  count(state, name = "n") |>
+  arrange(desc(n)) |>
+  slice(1) |>
+  pull(state) |>
+  as.character()
+
+# top destinations from s0
+tibble(
+  dest = mc_states@states,
+  p_dest = mc_states@transitionMatrix[as.character(s0), ]
+) |>
+  arrange(desc(p_dest)) |>
+  filter(p_dest > 0)
+
+# stationary distribution
+pi_hat <- steadyStates(mc_states)
+pi_hat
+
+# ------------------------------------------------------
+# Model Diagnostics
+# ------------------------------------------------------
+
+# check row sums
+rowSums(P_state)
+
+# check for irreducibility
+is.irreducible(mc_states)
+
+# check for aperiodicity 
+period(mc_states)   # function only well defined for irreducible chains
+
+# take high power of transition matrix
+P_100 <- mc_states^100
+
+i <- 1
+comp <- rbind(
+  P_100 = P_100[i, ],
+  pi = pi_hat
+)
+
+comp
