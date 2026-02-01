@@ -15,8 +15,6 @@ geolife_root <- "data/Geolife Trajectories 1.3/Data"
 # 0) User-tunable knobs
 # ------------------------------------------------------------
 n_traj   <- 100   # how many trajectories to pull
-n_plot   <- 10    # how many to show on the map
-cell_deg <- 0.02  # grid resolution (~2.2km in latitude); adjust as desired
 
 # ------------------------------------------------------------
 # 1) Sample trajectories (single locale, fast)
@@ -44,6 +42,7 @@ pts_sf <- st_as_sf(unique_pts,
 
 coords <- st_coordinates(pts_sf)
 
+set.seed(12)
 km <- kmeans(coords, centers = 10, iter.max = 100)
 
 
@@ -71,7 +70,7 @@ centers_sf <- st_as_sf(
   mutate(clust = seq_len(nrow(centers)))
 
 # union centroids to build shapes on map
-bbox <- st_as_sfc(st_bbox(centers_sf)) # bounding box for clipping
+bbox <- st_as_sfc(st_bbox(pts_sf)) # bounding box for clipping
 
 # Voronoi polygons
 voronoi <- st_voronoi(st_union(centers_sf))
@@ -83,7 +82,6 @@ voronoi_sf <- st_sf(
 ) %>%
   st_intersection(bbox) %>% # clip to bounding box
   mutate(clust = seq_len(nrow(.))) # assign cluster IDs
-
 
 ggplot() +
   annotation_map_tile(type = "osm", zoomin = 0) +
@@ -106,8 +104,60 @@ ggplot() +
   ) +
   coord_sf(crs = st_crs(3857), expand = FALSE) +
   theme_minimal() +
-  labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster") +
-  guides(fill = "none")
+  labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster")
+
+# Plot One trajectory
+
+set.seed(24)
+
+# Get example lines
+traj_ids <- pts_local |>
+  distinct(traj_id)
+
+n_keep <- min(3, nrow(traj_ids)) # specifies 3 trajectories
+
+traj_keep <- traj_ids |>
+  slice_sample(n = n_keep) |>
+  pull(traj_id)
+
+pts_plot <- pts_local |>
+  filter(traj_id %in% traj_keep)
+
+traj_lines <- st_as_sf(pts_plot, coords = c("lon", "lat"), crs = 4326, remove = FALSE) |>
+  arrange(traj_id, t) |>
+  group_by(traj_id) |>
+  summarise(do_union = FALSE, .groups = "drop") |>
+  st_cast("LINESTRING") |>
+  st_transform(3857)
+
+ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  geom_rect(
+    inherit.aes = FALSE,
+    aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+    fill = "white", alpha = 0.35
+  ) +
+  geom_sf(
+    data = voronoi_sf,
+    aes(fill = factor(clust)),
+    alpha = 0.4,
+    color = "black",
+    linewidth = 0.3
+  ) +
+  geom_sf(
+    data = centers_sf,
+    color = "red",
+    size = 2
+  ) +
+  geom_sf(
+    data = traj_lines,
+    color = "black",
+    linewidth = 1.0,
+    alpha = 0.9
+  ) + 
+  coord_sf(crs = st_crs(3857), expand = FALSE) +
+  theme_minimal() +
+  labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster")
 
 # -------------------------------------------------------
 # Define States
@@ -198,3 +248,4 @@ comp <- rbind(
 )
 
 comp
+
