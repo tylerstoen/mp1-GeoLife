@@ -273,6 +273,12 @@ Since consecutive duplicates were removed, this stationary distribution describe
 For example: State 9 is visited approximately 33% of the time in the long run, meaning that about one out of every three movements results in a visit to this region.
 
 ## Model Diagnostics
+```{r}
+# check that all observations got assigned a state
+na_state_n <- sum(is.na(pts_local$state))
+na_state_n
+```
+No observations were left unassigned to a state.
 
 ```{r}
 # check row sums
