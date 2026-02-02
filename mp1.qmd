@@ -1,5 +1,296 @@
 ---
-title: "mp1"
+title: "GeoLife Trajectories"
+author: "Tyler and Jose"
 format: html
 ---
 
+```{r}
+#| echo: false
+#| message: false
+library(tidyverse)
+library(lubridate)
+library(fs)
+library(sf)
+library(ggspatial)
+library(markovchain)
+library(prettymapr)
+
+source("scripts/sample_geolife.R")
+```
+
+```{r}
+#| echo: false
+# read in the data
+geolife_root <- "data/Geolife Trajectories 1.3/Data"
+```
+
+## Sample Trajectories
+
+```{r}
+#| echo: false
+n_traj   <- 100   # how many trajectories to pull
+```
+
+```{r}
+pts_local <- sample_geolife_same_locale_fast(
+  n = n_traj,
+  radius_km = 60,
+  n_candidates = 1500,
+  head_pts = 50,
+  seed = 42,
+  root = geolife_root
+)
+```
+
+## Cluster Grid
+
+```{r}
+unique_pts <- pts_local |>
+  count(lon, lat, name = "w")
+
+pts_sf <- st_as_sf(unique_pts,
+                   coords = c("lon","lat"),
+                   crs = 4326) |>
+  st_transform(3857)
+
+coords <- st_coordinates(pts_sf)
+
+set.seed(12)
+km <- kmeans(coords, centers = 10, iter.max = 100)
+
+
+unique_pts$clust <- km$cluster
+
+pts_local$state <- km$cluster[
+  match(
+    paste(pts_local$lon, pts_local$lat),
+    paste(unique_pts$lon, unique_pts$lat)
+  )
+]
+
+```
+
+## Plot Clusters
+
+```{r}
+#| message: false
+centers <- as.data.frame(km$centers)
+colnames(centers) <- c("x", "y")
+
+centers_sf <- st_as_sf(
+  centers,
+  coords = c("x", "y"),
+  crs = 3857
+) |>
+  mutate(clust = seq_len(nrow(centers)))
+
+# union centroids to build shapes on map
+bbox <- st_as_sfc(st_bbox(pts_sf)) # bounding box for clipping
+
+# Voronoi polygons
+voronoi <- st_voronoi(st_union(centers_sf))
+voronoi_polys <- st_collection_extract(voronoi) # extract polygons
+
+# turn into sf object
+voronoi_sf <- st_sf(
+  geometry = voronoi_polys
+) %>%
+  st_intersection(bbox) %>% # clip to bounding box
+  mutate(clust = seq_len(nrow(.))) # assign cluster IDs
+
+ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  geom_rect(
+    inherit.aes = FALSE,
+    aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+    fill = "white", alpha = 0.35
+  ) +
+  geom_sf(
+    data = voronoi_sf,
+    aes(fill = factor(clust)),
+    alpha = 0.4,
+    color = "black",
+    linewidth = 0.3
+  ) +
+  geom_sf(
+    data = centers_sf,
+    color = "red",
+    size = 2
+  ) +
+  coord_sf(crs = st_crs(3857), expand = FALSE) +
+  theme_minimal() +
+  labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster")
+
+```
+
+```{r}
+# Plot One trajectory
+
+set.seed(24)
+
+# Get example lines
+traj_ids <- pts_local |>
+  distinct(traj_id)
+
+n_keep <- min(3, nrow(traj_ids)) # specifies 3 trajectories
+
+traj_keep <- traj_ids |>
+  slice_sample(n = n_keep) |>
+  pull(traj_id)
+
+pts_plot <- pts_local |>
+  filter(traj_id %in% traj_keep)
+
+traj_lines <- st_as_sf(pts_plot, coords = c("lon", "lat"), crs = 4326, remove = FALSE) |>
+  arrange(traj_id, t) |>
+  group_by(traj_id) |>
+  summarise(do_union = FALSE, .groups = "drop") |>
+  st_cast("LINESTRING") |>
+  st_transform(3857)
+
+ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  geom_rect(
+    inherit.aes = FALSE,
+    aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+    fill = "white", alpha = 0.35
+  ) +
+  geom_sf(
+    data = voronoi_sf,
+    aes(fill = factor(clust)),
+    alpha = 0.4,
+    color = "black",
+    linewidth = 0.3
+  ) +
+  geom_sf(
+    data = centers_sf,
+    color = "red",
+    size = 2
+  ) +
+  geom_sf(
+    data = traj_lines,
+    color = "black",
+    linewidth = 1.0,
+    alpha = 0.9
+  ) + 
+  coord_sf(crs = st_crs(3857), expand = FALSE) +
+  theme_minimal() +
+  labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster")
+
+```
+
+## Define States
+
+```{r}
+pts_states <- pts_local |>
+  group_by(traj_id) |>
+  filter(state != lag(state) | is.na(lag(state))) |>
+  ungroup()
+```
+
+Note that consecutive duplicate states within each trajectory were removed, retaining only state changes, reducing GPS oversampling.
+
+## Build Transition Matrix
+
+```{r}
+# transition count matrix
+N_state <- with(
+  pts_states |>
+    arrange(traj_id, t) |>
+    group_by(traj_id) |>
+    mutate(state_next = lead(state)) |>
+    filter(!is.na(state_next)) |>
+    ungroup(),
+  table(
+    factor(state, levels = sort(unique(state))),
+    factor(state_next, levels = sort(unique(state)))
+  )
+)
+
+# transition probability matrix
+P_state <- prop.table(N_state, 1) |> unclass()
+P_state
+```
+
+The transition matrix tells us how movement occurs between regions, giving the probability of moving to each region conditional on the current region.
+
+For example, consider state 9. The transition matrix indicates that, conditional on leaving state 9, the process moves to state 10 with probability approximately 0.59.
+
+```{r}
+# create markovchain object
+mc_states <- new("markovchain",
+                 states = rownames(P_state),
+                 byrow = TRUE,
+                 transitionMatrix = P_state,
+                 name = "Cluster state process"
+)
+```
+
+## Long-Run Behavior
+
+```{r}
+# most visited states
+pts_states |>
+  count(state, name = "n") |>
+  arrange(desc(n)) 
+```
+
+Because consecutive duplicate states were removed, these counts reflect how often regions are entered, not how long individuals remain within them.
+
+```{r}
+# most visited state
+s0 <- pts_states |>
+  count(state, name = "n") |>
+  arrange(desc(n)) |>
+  slice(1) |>
+  pull(state) |>
+  as.character()
+
+# top destinations from s0
+tibble(
+  dest = mc_states@states,
+  p_dest = mc_states@transitionMatrix[as.character(s0), ]
+) |>
+  arrange(desc(p_dest)) |>
+  filter(p_dest > 0)
+```
+
+Conditional on leaving state 9, the process most often transitions to state 10, followed by state 5. This indicates that state 9 is strongly connected to a small subset of nearby regions.
+
+```{r}
+# stationary distribution
+pi_hat <- steadyStates(mc_states)
+pi_hat
+```
+
+Since consecutive duplicates were removed, this stationary distribution describes the long-run frequency with which regions are visited during movement, independent of the starting location.
+
+For example: State 9 is visited approximately 33% of the time in the long run, meaning that about one out of every three movements results in a visit to this region.
+
+## Model Diagnostics
+
+```{r}
+# check row sums
+rowSums(P_state)
+
+# check for irreducibility
+is.irreducible(mc_states)
+
+# check for aperiodicity 
+period(mc_states)   # function only well defined for irreducible chains
+```
+
+The MC is both irreducible and aperiodic, therefore it is ergodic.
+
+```{r}
+# take high power of transition matrix
+P_100 <- mc_states^100
+
+i <- 1
+comp <- rbind(
+  P_100 = P_100[i, ],
+  pi = pi_hat
+); comp
+```
+
+Comparing the high power of the transition matrix to the stationary distribution confirms that the chain converges to its long-run behavior.
