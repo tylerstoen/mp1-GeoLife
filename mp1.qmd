@@ -272,12 +272,27 @@ Since consecutive duplicates were removed, this stationary distribution describe
 
 For example: State 9 is visited approximately 33% of the time in the long run, meaning that about one out of every three movements results in a visit to this region.
 
+```{r}
+# expected return times
+return_times <- tibble(
+  state = mc_states@states,
+  pi = as.numeric(pi_hat),
+  expected_return_time = meanRecurrenceTime(mc_states)
+)
+
+return_times
+```
+
+The expected return time here is defined as the average number of region-to-region moves it takes to return to a region after leaving it.
+
 ## Model Diagnostics
+
 ```{r}
 # check that all observations got assigned a state
 na_state_n <- sum(is.na(pts_local$state))
 na_state_n
 ```
+
 No observations were left unassigned to a state.
 
 ```{r}
