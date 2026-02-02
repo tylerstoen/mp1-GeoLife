@@ -44,6 +44,8 @@ pts_local <- sample_geolife_same_locale_fast(
 
 ## Cluster Grid
 
+Instead of using the grid state definition approach, our approach defined an irregular grid based on visited locations. To do this, we ran kmeans on uniquely observed latitude/longitude locations in the data.
+
 ```{r}
 unique_pts <- pts_local |>
   count(lon, lat, name = "w")
@@ -67,8 +69,9 @@ pts_local$state <- km$cluster[
     paste(unique_pts$lon, unique_pts$lat)
   )
 ]
-
 ```
+
+We defined clustered observations to be unique locations visited on the map, discarding the frequency of visits to an individual location. Because we removed the impact of visit frequency, clusters can be interpreted as spacial regions that are defined by minimizing squared distance between each uniquely visited location and a centroid. We arbitrarily set the number of clusters to 10.
 
 ## Plot Clusters
 
@@ -122,6 +125,8 @@ ggplot() +
   labs(title = "K-means Clusters (Voronoi Polygons)", fill = "Cluster")
 
 ```
+
+Voronoi Polygons are used to create shapes by determining which centroid is closest to a given point on the map. The color for a latitude/longitude pair matches that of the nearest centroid in map distance.
 
 ```{r}
 # Plot One trajectory
