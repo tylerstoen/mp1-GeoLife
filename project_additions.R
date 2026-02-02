@@ -188,6 +188,7 @@ N_state <- with(
 
 # transition probability matrix
 P_state <- prop.table(N_state, 1) |> unclass()
+P_state
 
 # create markovchain object
 mc_states <- new("markovchain",
