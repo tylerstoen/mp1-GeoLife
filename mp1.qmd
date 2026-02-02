@@ -4,6 +4,7 @@ author: "Tyler and Jose"
 format: html
 ---
 
+
 ```{r}
 #| echo: false
 #| message: false
@@ -43,6 +44,53 @@ pts_local <- sample_geolife_same_locale_fast(
 ```
 
 ## Cluster Grid
+
+In class, we defined the grid using latitude and longitude coordinates, resulting in a grid of squares covering the geographical area of interest.
+
+```{r}
+cell_deg <- 0.02  # grid resolution
+
+# bounding box of observed points (in lon/lat)
+bbox_ll <- st_bbox(
+  st_as_sf(pts_local, coords = c("lon", "lat"), crs = 4326)
+)
+
+# make regular grid in lon/lat
+grid_ll <- st_make_grid(
+  st_as_sfc(bbox_ll),
+  cellsize = c(cell_deg, cell_deg),
+  square = TRUE
+)
+
+grid_sf <- st_sf(geometry = grid_ll) |>
+  st_transform(3857)
+
+ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  
+  # lighten basemap
+  geom_rect(
+    inherit.aes = FALSE,
+    aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+    fill = "white", alpha = 0.35
+  ) +
+  
+  # grid cells
+  geom_sf(
+    data = grid_sf,
+    fill = NA,
+    color = "grey40",
+    linewidth = 0.3
+  ) +
+  
+  coord_sf(crs = st_crs(3857), expand = FALSE) +
+  theme_minimal() +
+  labs(
+    title = "Original Regular Grid (cell_deg = 0.02)",
+    subtitle = "Fixed spatial discretization overlaid with sample trajectories"
+  ) +
+  guides(color = "none")
+```
 
 Instead of using the grid state definition approach, our approach defined an irregular grid based on visited locations. To do this, we ran kmeans on uniquely observed latitude/longitude locations in the data.
 
